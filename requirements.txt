@@ -4,4 +4,6 @@ numpy
 plotly
 requests
 fpdf
+scikit-learn
+scipy
 PyPortfolioOpt
