@@ -179,14 +179,14 @@ if check_password():
             
             df_trades = pd.concat(all_trades)
 
-            # --- BYPASS MATEMÁTICO NATIVO (Adiós errores de librería) ---
             df_pct = df_retornos / cap_inicial
-            mu = df_pct.mean() * 252            # Rendimiento Histórico Anualizado
-            S = df_pct.cov() * 252              # Matriz de Covarianza Anualizada
-            # ------------------------------------------------------------
+            mu = df_pct.mean() * 252            
+            S = df_pct.cov() * 252              
             
-            ef = EfficientFrontier(mu, S)
-            ef.add_constraint(lambda w: w <= peso_max_ea)
+            # --- PARCHE PARA VERSIÓN NUEVA EN LA NUBE ---
+            # Ahora le pasamos el peso máximo (peso_max_ea) directo en la creación
+            ef = EfficientFrontier(mu, S, weight_bounds=(0.0, peso_max_ea))
+            # --------------------------------------------
             
             try:
                 if "Sharpe" in objetivo_opt: weights = ef.max_sharpe()
