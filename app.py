@@ -46,7 +46,6 @@ def analizar_con_ia(api_key, datos, rango):
     if not api_key: return "⚠️ Ingrese su API Key en la barra lateral para activar la IA."
     
     try:
-        # PASO 1: Preguntarle a Google qué modelos tenés habilitados en tu llave
         url_models = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
         resp_models = requests.get(url_models)
         
@@ -55,20 +54,18 @@ def analizar_con_ia(api_key, datos, rango):
             
         modelos_disponibles = resp_models.json().get('models', [])
         
-        # PASO 2: Elegir dinámicamente el mejor modelo Gemini que soporte generar texto
         modelo_elegido = None
         for m in modelos_disponibles:
             if 'generateContent' in m.get('supportedGenerationMethods', []) and 'gemini' in m.get('name', '').lower():
                 if '1.5-flash' in m.get('name'):
-                    modelo_elegido = m.get('name')  # Ya viene con el formato "models/gemini..."
+                    modelo_elegido = m.get('name')
                     break
                 elif not modelo_elegido:
-                    modelo_elegido = m.get('name') # Guardamos el primero que encuentre por las dudas
+                    modelo_elegido = m.get('name')
 
         if not modelo_elegido:
             return "❌ Tu API Key no tiene ningún modelo Gemini habilitado para generar texto."
 
-        # PASO 3: Disparar el análisis con el modelo exacto que sabemos que funciona
         url_gen = f"https://generativelanguage.googleapis.com/v1beta/{modelo_elegido}:generateContent?key={api_key}"
         headers = {'Content-Type': 'application/json'}
         
@@ -176,12 +173,13 @@ if check_password():
                 df['Asset'] = "ORO (XAUUSD)" if "XAU" in simbolo or "GOLD" in simbolo else simbolo
                 all_trades.append(df[['EA', 'Asset', 'Profit/Loss', 'Close time']])
             
-         df_retornos = pd.DataFrame(dict_ret).fillna(0)
-
-            # PARCHE CLOUD: Forzamos el formato estricto de fechas y números
+            df_retornos = pd.DataFrame(dict_ret).fillna(0)
+            
+            # --- PARCHE CLOUD APLICADO CORRECTAMENTE ---
             df_retornos.index = pd.to_datetime(df_retornos.index)
             df_retornos = df_retornos.astype(float)
-
+            # -------------------------------------------
+            
             df_trades = pd.concat(all_trades)
 
             # Optimización
@@ -280,5 +278,4 @@ if check_password():
                     
                     st.download_button("📥 Descargar PDF", pdf.output(dest='S').encode('latin-1', 'replace'), f"Reporte_BIAL_{r['rango']}.pdf")
 else:
-
     st.info("👋 Leandro, cargá los archivos de StrategyQuant para que BIAL ENGINE comience su análisis.")
