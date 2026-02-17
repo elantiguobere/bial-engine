@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go # <--- NUEVA LIBRERÍA GRÁFICA PRO
 import io
 import requests
 from fpdf import FPDF
@@ -152,7 +153,7 @@ if check_password():
     peso_max_ea = st.sidebar.slider("Peso Máximo por EA", 0.1, 1.0, 0.5)
     
     st.sidebar.markdown("---")
-    # --- NUEVO CONTROL DE LIMPIEZA INTELIGENTE ---
+    # --- CONTROL DE LIMPIEZA INTELIGENTE ---
     auto_limpieza = st.sidebar.checkbox("🧹 Activar Auto-Limpieza BIAL", value=True, help="Elimina automáticamente estrategias con alta correlación (>0.75) y bajo Sharpe.")
     
     api_key_gemini = st.sidebar.text_input("🔑 Gemini API Key", type="password", help="Pega aquí tu llave de Google AI Studio")
@@ -192,24 +193,19 @@ if check_password():
                     for j in range(i+1, len(columnas)):
                         ea1 = columnas[i]
                         ea2 = columnas[j]
-                        if corr_matrix_temp.iloc[i, j] > 0.75: # Si son muy parecidos
-                            # Calculamos su Sharpe
+                        if corr_matrix_temp.iloc[i, j] > 0.75:
                             std1 = df_retornos[ea1].std()
                             std2 = df_retornos[ea2].std()
                             sh1 = (df_retornos[ea1].mean() / std1) * np.sqrt(252) if std1 != 0 else 0
                             sh2 = (df_retornos[ea2].mean() / std2) * np.sqrt(252) if std2 != 0 else 0
                             
-                            if sh1 >= sh2:
-                                to_drop.add(ea2)
-                            else:
-                                to_drop.add(ea1)
+                            if sh1 >= sh2: to_drop.add(ea2)
+                            else: to_drop.add(ea1)
                 
                 if to_drop:
                     df_retornos = df_retornos.drop(columns=list(to_drop))
                     eliminados_log = list(to_drop)
-            # -------------------------------------
 
-            # Filtramos también los trades para los gráficos de activos
             df_trades = pd.concat(all_trades)
             df_trades = df_trades[df_trades['EA'].isin(df_retornos.columns)]
 
@@ -264,8 +260,21 @@ if check_password():
             tabs = st.tabs(["📈 Análisis Visual", "🌍 Activos", "🔗 Correlación", "🤖 Consultoría IA", "📥 Auditoría"])
             
             with tabs[0]:
-                fig_eq = px.area(cap_inicial + r['p_series'].cumsum(), title="Crecimiento Consolidado BIAL")
-                fig_eq.update_traces(line_color='#f59e0b', fillcolor='rgba(245, 158, 11, 0.1)')
+                # --- NUEVO GRÁFICO PROFESIONAL (Plotly GO) ---
+                equity_curve = cap_inicial + r['p_series'].cumsum()
+                fig_eq = go.Figure()
+                fig_eq.add_trace(go.Scatter(
+                    x=equity_curve.index, y=equity_curve, mode='lines', name='Valor Cartera',
+                    line=dict(color='#f59e0b', width=2), fill='tozeroy', fillcolor='rgba(245, 158, 11, 0.2)',
+                    hovertemplate='Fecha: %{x|%Y-%m-%d}<br>Valor: $%{y:,.2f}<extra></extra>'
+                ))
+                fig_eq.update_layout(
+                    title={'text': "<b>Crecimiento Patrimonial Consolidado BIAL</b>", 'y':0.9, 'x':0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': dict(size=20, color='#f59e0b')},
+                    paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                    xaxis=dict(title='Fecha', showgrid=False, color='#9ca3af'),
+                    yaxis=dict(title='Valor de la Cartera ($)', showgrid=True, gridcolor='rgba(128, 128, 128, 0.2)', tickprefix="$", color='#9ca3af'),
+                    showlegend=False, hovermode="x unified"
+                )
                 st.plotly_chart(fig_eq, use_container_width=True)
                 
             with tabs[1]:
@@ -277,11 +286,8 @@ if check_password():
             with tabs[2]:
                 st.subheader("🔗 Mapa de Calor de Descorrelación")
                 st.markdown("Valores cercanos a **0** o **negativos (azul/verde)** indican excelente diversificación. Valores cercanos a **1 (rojo)** indican que los sistemas operan igual.")
-                fig_corr = px.imshow(r['corr_matrix'], 
-                                     text_auto=".2f", 
-                                     aspect="auto",
-                                     color_continuous_scale="RdBu_r", 
-                                     title="Correlación Diaria entre Estrategias")
+                fig_corr = px.imshow(r['corr_matrix'], text_auto=".2f", aspect="auto",
+                                     color_continuous_scale="RdBu_r", title="Correlación Diaria entre Estrategias")
                 st.plotly_chart(fig_corr, use_container_width=True)
 
             with tabs[3]:
