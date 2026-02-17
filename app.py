@@ -176,7 +176,12 @@ if check_password():
                 df['Asset'] = "ORO (XAUUSD)" if "XAU" in simbolo or "GOLD" in simbolo else simbolo
                 all_trades.append(df[['EA', 'Asset', 'Profit/Loss', 'Close time']])
             
-            df_retornos = pd.DataFrame(dict_ret).fillna(0)
+         df_retornos = pd.DataFrame(dict_ret).fillna(0)
+
+            # PARCHE CLOUD: Forzamos el formato estricto de fechas y números
+            df_retornos.index = pd.to_datetime(df_retornos.index)
+            df_retornos = df_retornos.astype(float)
+
             df_trades = pd.concat(all_trades)
 
             # Optimización
@@ -275,4 +280,5 @@ if check_password():
                     
                     st.download_button("📥 Descargar PDF", pdf.output(dest='S').encode('latin-1', 'replace'), f"Reporte_BIAL_{r['rango']}.pdf")
 else:
+
     st.info("👋 Leandro, cargá los archivos de StrategyQuant para que BIAL ENGINE comience su análisis.")
