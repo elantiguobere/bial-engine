@@ -3,7 +3,6 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import io
-import re
 import requests
 from fpdf import FPDF
 from pypfopt.efficient_frontier import EfficientFrontier
@@ -173,12 +172,13 @@ if check_password():
                 df['Asset'] = "ORO (XAUUSD)" if "XAU" in simbolo or "GOLD" in simbolo else simbolo
                 all_trades.append(df[['EA', 'Asset', 'Profit/Loss', 'Close time']])
             
+            # --- PARCHE CLOUD DE LIMPIEZA EXTREMA APLICADO ---
             df_retornos = pd.DataFrame(dict_ret).fillna(0)
-            
-            # --- PARCHE CLOUD APLICADO CORRECTAMENTE ---
             df_retornos.index = pd.to_datetime(df_retornos.index)
-            df_retornos = df_retornos.astype(float)
-            # -------------------------------------------
+            df_retornos = df_retornos[df_retornos.index.notnull()] # Elimina fechas nulas
+            df_retornos = df_retornos.groupby(df_retornos.index).sum() # Unifica duplicados
+            df_retornos = df_retornos.astype(np.float64) # Fuerza números perfectos
+            # -------------------------------------------------
             
             df_trades = pd.concat(all_trades)
 
