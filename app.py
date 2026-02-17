@@ -150,7 +150,11 @@ if check_password():
     cap_inicial = st.sidebar.number_input("Capital Inicial ($)", value=10000, step=1000)
     objetivo_opt = st.sidebar.selectbox("Optimizar para", ["Max Sharpe", "Min Volatilidad", "Max Return"])
     peso_max_ea = st.sidebar.slider("Peso Máximo por EA", 0.1, 1.0, 0.5)
+    
     st.sidebar.markdown("---")
+    # --- NUEVO CONTROL DE LIMPIEZA INTELIGENTE ---
+    auto_limpieza = st.sidebar.checkbox("🧹 Activar Auto-Limpieza BIAL", value=True, help="Elimina automáticamente estrategias con alta correlación (>0.75) y bajo Sharpe.")
+    
     api_key_gemini = st.sidebar.text_input("🔑 Gemini API Key", type="password", help="Pega aquí tu llave de Google AI Studio")
 
     st.title("🏆 BIAL AI Portfolio Manager Pro")
@@ -176,8 +180,38 @@ if check_password():
             df_retornos = df_retornos[df_retornos.index.notnull()]
             df_retornos = df_retornos.groupby(df_retornos.index).sum()
             df_retornos = df_retornos.astype(np.float64)
-            
+
+            # --- LÓGICA DE AUTO-LIMPIEZA BIAL ---
+            eliminados_log = []
+            if auto_limpieza and len(df_retornos.columns) > 1:
+                corr_matrix_temp = df_retornos.corr()
+                to_drop = set()
+                columnas = corr_matrix_temp.columns
+                
+                for i in range(len(columnas)):
+                    for j in range(i+1, len(columnas)):
+                        ea1 = columnas[i]
+                        ea2 = columnas[j]
+                        if corr_matrix_temp.iloc[i, j] > 0.75: # Si son muy parecidos
+                            # Calculamos su Sharpe
+                            std1 = df_retornos[ea1].std()
+                            std2 = df_retornos[ea2].std()
+                            sh1 = (df_retornos[ea1].mean() / std1) * np.sqrt(252) if std1 != 0 else 0
+                            sh2 = (df_retornos[ea2].mean() / std2) * np.sqrt(252) if std2 != 0 else 0
+                            
+                            if sh1 >= sh2:
+                                to_drop.add(ea2)
+                            else:
+                                to_drop.add(ea1)
+                
+                if to_drop:
+                    df_retornos = df_retornos.drop(columns=list(to_drop))
+                    eliminados_log = list(to_drop)
+            # -------------------------------------
+
+            # Filtramos también los trades para los gráficos de activos
             df_trades = pd.concat(all_trades)
+            df_trades = df_trades[df_trades['EA'].isin(df_retornos.columns)]
 
             df_pct = df_retornos / cap_inicial
             mu = df_pct.mean() * 252            
@@ -197,7 +231,6 @@ if check_password():
             portfolio_series = pd.Series(0.0, index=df_retornos.index)
             for ea, w in cleaned_weights.items(): portfolio_series += df_retornos[ea] * w
                 
-            # Calculamos la matriz de correlación completa para graficarla
             matriz_correlacion = df_retornos.corr()
                 
             score_f, rango, icono, color, desc = obtener_rango_bial(portfolio_series, cap_inicial, matriz_correlacion)
@@ -208,12 +241,16 @@ if check_password():
                 'score': score_f, 'rango': rango, 'icono': icono, 'color': color, 'desc': desc,
                 'p_series': portfolio_series, 'net_p': net_p, 'm_dd': m_dd, 'sharpe': sharpe_f,
                 'trades': df_trades, 'weights': cleaned_weights, 'returns': df_retornos,
-                'n_archivos': len(archivos),
-                'corr_matrix': matriz_correlacion # Guardamos la matriz en la memoria
+                'n_archivos': len(df_retornos.columns),
+                'corr_matrix': matriz_correlacion,
+                'eliminados': eliminados_log
             }
 
         if st.session_state.get('calculado'):
             r = st.session_state['res']
+            
+            if r['eliminados']:
+                st.warning(f"🧹 **Filtro BIAL Activado:** Se descartaron {len(r['eliminados'])} estrategias redundantes o con mal ratio riesgo/beneficio: {', '.join(r['eliminados'])}")
             
             if r['score'] >= 80: st.balloons()
             st.markdown(f"""
@@ -224,7 +261,6 @@ if check_password():
                 </div>
             """, unsafe_allow_html=True)
 
-            # --- AGREGAMOS LA NUEVA PESTAÑA DE CORRELACIÓN ---
             tabs = st.tabs(["📈 Análisis Visual", "🌍 Activos", "🔗 Correlación", "🤖 Consultoría IA", "📥 Auditoría"])
             
             with tabs[0]:
@@ -238,12 +274,9 @@ if check_password():
                                     color_continuous_scale='RdYlGn', title="Beneficio Neto por Instrumento")
                 st.plotly_chart(fig_assets, use_container_width=True)
 
-            # --- DIBUJAMOS EL MAPA DE CALOR ACÁ ---
             with tabs[2]:
                 st.subheader("🔗 Mapa de Calor de Descorrelación")
                 st.markdown("Valores cercanos a **0** o **negativos (azul/verde)** indican excelente diversificación. Valores cercanos a **1 (rojo)** indican que los sistemas operan igual.")
-                
-                # Creamos el gráfico interactivo
                 fig_corr = px.imshow(r['corr_matrix'], 
                                      text_auto=".2f", 
                                      aspect="auto",
