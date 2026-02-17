@@ -6,7 +6,6 @@ import io
 import requests
 from fpdf import FPDF
 from pypfopt.efficient_frontier import EfficientFrontier
-from pypfopt import risk_models, expected_returns
 
 # ==========================================
 # 1. CONFIGURACIÓN Y SEGURIDAD BIAL
@@ -172,20 +171,19 @@ if check_password():
                 df['Asset'] = "ORO (XAUUSD)" if "XAU" in simbolo or "GOLD" in simbolo else simbolo
                 all_trades.append(df[['EA', 'Asset', 'Profit/Loss', 'Close time']])
             
-            # --- PARCHE CLOUD DE LIMPIEZA EXTREMA APLICADO ---
             df_retornos = pd.DataFrame(dict_ret).fillna(0)
             df_retornos.index = pd.to_datetime(df_retornos.index)
-            df_retornos = df_retornos[df_retornos.index.notnull()] # Elimina fechas nulas
-            df_retornos = df_retornos.groupby(df_retornos.index).sum() # Unifica duplicados
-            df_retornos = df_retornos.astype(np.float64) # Fuerza números perfectos
-            # -------------------------------------------------
+            df_retornos = df_retornos[df_retornos.index.notnull()]
+            df_retornos = df_retornos.groupby(df_retornos.index).sum()
+            df_retornos = df_retornos.astype(np.float64)
             
             df_trades = pd.concat(all_trades)
 
-            # Optimización
+            # --- BYPASS MATEMÁTICO NATIVO (Adiós errores de librería) ---
             df_pct = df_retornos / cap_inicial
-            mu = expected_returns.mean_historical_return(df_pct, returns_data=True, frequency=252)
-            S = risk_models.sample_cov(df_pct, returns_data=True, frequency=252)
+            mu = df_pct.mean() * 252            # Rendimiento Histórico Anualizado
+            S = df_pct.cov() * 252              # Matriz de Covarianza Anualizada
+            # ------------------------------------------------------------
             
             ef = EfficientFrontier(mu, S)
             ef.add_constraint(lambda w: w <= peso_max_ea)
@@ -205,7 +203,6 @@ if check_password():
             score_f, rango, icono, color, desc = obtener_rango_bial(portfolio_series, cap_inicial, df_retornos.corr())
             net_p, m_dd, m_ratio, sharpe_f = calcular_kpis(portfolio_series, cap_inicial)
 
-            # Guardamos todo en la "memoria"
             st.session_state['calculado'] = True
             st.session_state['res'] = {
                 'score': score_f, 'rango': rango, 'icono': icono, 'color': color, 'desc': desc,
