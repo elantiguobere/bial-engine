@@ -161,10 +161,9 @@ if check_password():
     max_dd_pct = st.sidebar.number_input("Max Drawdown Global (%)", value=10.0, step=1.0)
     daily_dd_pct = st.sidebar.number_input("Max Daily DD (%)", value=5.0, step=1.0)
     
-    # --- NUEVOS INPUTS: EJECUCIÓN MT5 ---
     st.sidebar.markdown("---")
     st.sidebar.markdown("### ⚙️ Ejecución MT5")
-    lotes_totales = st.sidebar.number_input("Lotes Totales a Distribuir", value=1.00, step=0.01, help="Cuántos lotes en total querés que sumen todas tus estrategias juntas.")
+    lotes_totales = st.sidebar.number_input("Lotes Totales a Distribuir", value=1.00, step=0.01)
     st.sidebar.markdown("---")
 
     api_key_gemini = st.sidebar.text_input("🔑 Gemini API Key", type="password", help="Pega aquí tu llave de Google AI Studio")
@@ -241,38 +240,28 @@ if check_password():
             score_f, rango, icono, color, desc = obtener_rango_bial(portfolio_series, cap_inicial, matriz_correlacion)
             net_p, m_dd, m_ratio, sharpe_f = calcular_kpis(portfolio_series, cap_inicial)
 
+            # --- SIMULACIÓN DE FONDEO ---
             target_usd = cap_inicial * (target_pct / 100)
             max_dd_usd = cap_inicial * (max_dd_pct / 100)
             daily_dd_usd = cap_inicial * (daily_dd_pct / 100)
 
-            passed_prop = False
-            failed_prop = False
-            fail_reason = ""
-            days_to_pass = 0
-            
-            current_equity = cap_inicial
-            high_water_mark = cap_inicial
-            worst_daily = portfolio_series.min()
+            passed_prop, failed_prop, fail_reason, days_to_pass = False, False, "", 0
+            current_equity, high_water_mark, worst_daily = cap_inicial, cap_inicial, portfolio_series.min()
 
             for date, daily_pnl in portfolio_series.items():
                 days_to_pass += 1
                 current_equity += daily_pnl
-                
-                if current_equity > high_water_mark:
-                    high_water_mark = current_equity
-                    
+                if current_equity > high_water_mark: high_water_mark = current_equity
                 current_dd = high_water_mark - current_equity
                 
                 if daily_pnl < -daily_dd_usd:
                     failed_prop = True
                     fail_reason = f"Violación de Daily Drawdown (${abs(daily_pnl):,.2f}) el {date.strftime('%d/%m/%Y')}."
                     break
-                    
                 if current_dd > max_dd_usd:
                     failed_prop = True
                     fail_reason = f"Violación de Max Drawdown (${current_dd:,.2f}) el {date.strftime('%d/%m/%Y')}."
                     break
-                    
                 if (current_equity - cap_inicial) >= target_usd:
                     passed_prop = True
                     break
@@ -283,13 +272,28 @@ if check_password():
                 'daily_dd_usd': daily_dd_usd, 'worst_daily': worst_daily
             }
 
+            # --- NUEVA LÓGICA: PREPARACIÓN DE HEATMAP MENSUAL ---
+            temp_df = pd.DataFrame({'Retorno_USD': portfolio_series})
+            temp_df['Year'] = temp_df.index.year
+            temp_df['Month'] = temp_df.index.month
+            monthly_sum = temp_df.groupby(['Year', 'Month'])['Retorno_USD'].sum().reset_index()
+            monthly_sum['Retorno_Pct'] = (monthly_sum['Retorno_USD'] / cap_inicial) * 100
+            
+            heatmap_data = monthly_sum.pivot(index='Year', columns='Month', values='Retorno_Pct')
+            heatmap_data = heatmap_data.reindex(columns=range(1, 13))
+            heatmap_data.rename(columns={1:'Ene', 2:'Feb', 3:'Mar', 4:'Abr', 5:'May', 6:'Jun', 
+                                         7:'Jul', 8:'Ago', 9:'Sep', 10:'Oct', 11:'Nov', 12:'Dic'}, inplace=True)
+            heatmap_data['YTD'] = heatmap_data.sum(axis=1)
+            heatmap_data.index = heatmap_data.index.astype(str) # Convierte el Año en texto para gráficos perfectos
+            # ----------------------------------------------------
+
             st.session_state['calculado'] = True
             st.session_state['res'] = {
                 'score': score_f, 'rango': rango, 'icono': icono, 'color': color, 'desc': desc,
                 'p_series': portfolio_series, 'net_p': net_p, 'm_dd': m_dd, 'sharpe': sharpe_f,
                 'trades': df_trades, 'weights': cleaned_weights, 'returns': df_retornos,
                 'n_archivos': len(df_retornos.columns), 'corr_matrix': matriz_correlacion,
-                'eliminados': eliminados_log, 'eval_prop': eval_prop
+                'eliminados': eliminados_log, 'eval_prop': eval_prop, 'heatmap_data': heatmap_data
             }
 
         if st.session_state.get('calculado'):
@@ -307,7 +311,6 @@ if check_password():
                 </div>
             """, unsafe_allow_html=True)
 
-            # --- NUEVA PESTAÑA: EJECUCIÓN MT5 AGREGADA AL MENÚ ---
             tabs = st.tabs(["📈 Análisis Visual", "🌍 Activos", "🔗 Correlación", "🎯 Prueba de Fondeo", "⚙️ Ejecución MT5", "🤖 Consultoría IA", "📥 Auditoría"])
             
             with tabs[0]:
@@ -327,6 +330,20 @@ if check_password():
                 )
                 st.plotly_chart(fig_eq, use_container_width=True)
                 
+                # --- NUEVO GRÁFICO: HEATMAP MENSUAL ---
+                st.markdown("---")
+                st.subheader("📊 Rentabilidad Mensual Histórica (%)")
+                fig_hm = px.imshow(r['heatmap_data'], 
+                                   text_auto=".2f", 
+                                   aspect="auto",
+                                   color_continuous_scale="RdYlGn", 
+                                   color_continuous_midpoint=0, # Centramos en 0 (Rojo negativo, Verde positivo)
+                                   labels=dict(x="Mes", y="Año", color="Retorno %"))
+                fig_hm.update_layout(xaxis_title="", yaxis_title="Año", coloraxis_showscale=False)
+                fig_hm.update_xaxes(side="top") # Ponemos los meses arriba
+                st.plotly_chart(fig_hm, use_container_width=True)
+                # ----------------------------------------
+
             with tabs[1]:
                 asset_perf = r['trades'].groupby('Asset')['Profit/Loss'].sum().sort_values()
                 fig_assets = px.bar(asset_perf, orientation='h', color=asset_perf.values, 
@@ -365,7 +382,6 @@ if check_password():
                 st.write(f"- **Peor Pérdida en un solo día (Worst Daily):** ${abs(e['worst_daily']):,.2f}")
                 st.write(f"- **Drawdown Global Máximo:** ${r['m_dd']:,.2f}")
 
-            # --- RENDERIZAMOS LA NUEVA PESTAÑA DE MT5 ---
             with tabs[4]:
                 st.subheader("⚙️ Traducir a MetaTrader 5")
                 st.markdown(f"Basado en un riesgo total distribuido de **{lotes_totales} lotes**, así debés configurar el parámetro `FixedLots` (o equivalente) en cada EA de tu MetaTrader 5.")
@@ -390,7 +406,6 @@ if check_password():
                 
                 df_lotes = pd.DataFrame(lotes_data)
                 
-                # Le damos un formato visual de tabla profesional
                 st.dataframe(
                     df_lotes.style.format({"Lotes MT5 (FixedLots)": "{:.2f}"})
                                   .applymap(lambda x: 'background-color: #ef4444' if '⚠️' in str(x) else '', subset=['Estado']),
