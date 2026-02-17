@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-import plotly.graph_objects as go # <--- NUEVA LIBRERÍA GRÁFICA PRO
+import plotly.graph_objects as go
 import io
 import requests
 from fpdf import FPDF
@@ -153,9 +153,16 @@ if check_password():
     peso_max_ea = st.sidebar.slider("Peso Máximo por EA", 0.1, 1.0, 0.5)
     
     st.sidebar.markdown("---")
-    # --- CONTROL DE LIMPIEZA INTELIGENTE ---
     auto_limpieza = st.sidebar.checkbox("🧹 Activar Auto-Limpieza BIAL", value=True, help="Elimina automáticamente estrategias con alta correlación (>0.75) y bajo Sharpe.")
     
+    # --- NUEVOS INPUTS: SIMULADOR DE FONDEO ---
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 🎯 Reglas de Prop Firm")
+    target_pct = st.sidebar.number_input("Target Requerido (%)", value=8.0, step=1.0)
+    max_dd_pct = st.sidebar.number_input("Max Drawdown Global (%)", value=10.0, step=1.0)
+    daily_dd_pct = st.sidebar.number_input("Max Daily DD (%)", value=5.0, step=1.0)
+    st.sidebar.markdown("---")
+
     api_key_gemini = st.sidebar.text_input("🔑 Gemini API Key", type="password", help="Pega aquí tu llave de Google AI Studio")
 
     st.title("🏆 BIAL AI Portfolio Manager Pro")
@@ -182,7 +189,6 @@ if check_password():
             df_retornos = df_retornos.groupby(df_retornos.index).sum()
             df_retornos = df_retornos.astype(np.float64)
 
-            # --- LÓGICA DE AUTO-LIMPIEZA BIAL ---
             eliminados_log = []
             if auto_limpieza and len(df_retornos.columns) > 1:
                 corr_matrix_temp = df_retornos.corr()
@@ -228,18 +234,63 @@ if check_password():
             for ea, w in cleaned_weights.items(): portfolio_series += df_retornos[ea] * w
                 
             matriz_correlacion = df_retornos.corr()
-                
             score_f, rango, icono, color, desc = obtener_rango_bial(portfolio_series, cap_inicial, matriz_correlacion)
             net_p, m_dd, m_ratio, sharpe_f = calcular_kpis(portfolio_series, cap_inicial)
+
+            # --- LÓGICA DE SIMULACIÓN DE FONDEO ---
+            target_usd = cap_inicial * (target_pct / 100)
+            max_dd_usd = cap_inicial * (max_dd_pct / 100)
+            daily_dd_usd = cap_inicial * (daily_dd_pct / 100)
+
+            passed_prop = False
+            failed_prop = False
+            fail_reason = ""
+            days_to_pass = 0
+            
+            current_equity = cap_inicial
+            high_water_mark = cap_inicial
+            worst_daily = portfolio_series.min()
+
+            for date, daily_pnl in portfolio_series.items():
+                days_to_pass += 1
+                current_equity += daily_pnl
+                
+                if current_equity > high_water_mark:
+                    high_water_mark = current_equity
+                    
+                current_dd = high_water_mark - current_equity
+                
+                # Check 1: Daily DD Violado
+                if daily_pnl < -daily_dd_usd:
+                    failed_prop = True
+                    fail_reason = f"Violación de Daily Drawdown (${abs(daily_pnl):,.2f}) el {date.strftime('%d/%m/%Y')}."
+                    break
+                    
+                # Check 2: Max DD Violado
+                if current_dd > max_dd_usd:
+                    failed_prop = True
+                    fail_reason = f"Violación de Max Drawdown (${current_dd:,.2f}) el {date.strftime('%d/%m/%Y')}."
+                    break
+                    
+                # Check 3: Target Alcanzado
+                if (current_equity - cap_inicial) >= target_usd:
+                    passed_prop = True
+                    break
+
+            eval_prop = {
+                'passed': passed_prop, 'failed': failed_prop, 'reason': fail_reason,
+                'days': days_to_pass, 'target_usd': target_usd, 'max_dd_usd': max_dd_usd,
+                'daily_dd_usd': daily_dd_usd, 'worst_daily': worst_daily
+            }
+            # ----------------------------------------
 
             st.session_state['calculado'] = True
             st.session_state['res'] = {
                 'score': score_f, 'rango': rango, 'icono': icono, 'color': color, 'desc': desc,
                 'p_series': portfolio_series, 'net_p': net_p, 'm_dd': m_dd, 'sharpe': sharpe_f,
                 'trades': df_trades, 'weights': cleaned_weights, 'returns': df_retornos,
-                'n_archivos': len(df_retornos.columns),
-                'corr_matrix': matriz_correlacion,
-                'eliminados': eliminados_log
+                'n_archivos': len(df_retornos.columns), 'corr_matrix': matriz_correlacion,
+                'eliminados': eliminados_log, 'eval_prop': eval_prop # Guardamos los resultados
             }
 
         if st.session_state.get('calculado'):
@@ -257,10 +308,10 @@ if check_password():
                 </div>
             """, unsafe_allow_html=True)
 
-            tabs = st.tabs(["📈 Análisis Visual", "🌍 Activos", "🔗 Correlación", "🤖 Consultoría IA", "📥 Auditoría"])
+            # --- AGREGAMOS LA NUEVA PESTAÑA DE FONDEO ---
+            tabs = st.tabs(["📈 Análisis Visual", "🌍 Activos", "🔗 Correlación", "🎯 Prueba de Fondeo", "🤖 Consultoría IA", "📥 Auditoría"])
             
             with tabs[0]:
-                # --- NUEVO GRÁFICO PROFESIONAL (Plotly GO) ---
                 equity_curve = cap_inicial + r['p_series'].cumsum()
                 fig_eq = go.Figure()
                 fig_eq.add_trace(go.Scatter(
@@ -290,7 +341,33 @@ if check_password():
                                      color_continuous_scale="RdBu_r", title="Correlación Diaria entre Estrategias")
                 st.plotly_chart(fig_corr, use_container_width=True)
 
+            # --- RENDERIZAMOS LA PESTAÑA DE FONDEO ---
             with tabs[3]:
+                e = r['eval_prop']
+                st.subheader("🎯 Simulador de Challenge (Prop Firms)")
+                st.markdown("Basado en los límites establecidos en la barra lateral, BIAL ENGINE simula día a día si la cartera superaría la evaluación.")
+                
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Target Objetivo", f"${e['target_usd']:,.2f}")
+                col2.metric("Límite Max DD", f"${e['max_dd_usd']:,.2f}")
+                col3.metric("Límite Daily DD", f"${e['daily_dd_usd']:,.2f}")
+                
+                st.markdown("<br>", unsafe_allow_html=True)
+                
+                if e['passed']:
+                    st.success(f"✅ **¡PRUEBA SUPERADA!** El portafolio alcanzó el target en **{e['days']} días** de operativa sin violar ninguna regla de riesgo. Apto para FTMO / FundedNext.")
+                    st.snow() # Lluvia de nieve para festejar el pase!
+                elif e['failed']:
+                    st.error(f"❌ **PRUEBA REPROBADA:** {e['reason']} Días operados hasta la eliminación: {e['days']}.")
+                else:
+                    st.warning(f"⏳ **TIEMPO AGOTADO:** El portafolio operó todo el período histórico sin romper reglas, pero no logró alcanzar el Target.")
+                    
+                st.markdown("---")
+                st.markdown("### 📊 Métricas de Estrés de la Cartera")
+                st.write(f"- **Peor Pérdida en un solo día (Worst Daily):** ${abs(e['worst_daily']):,.2f}")
+                st.write(f"- **Drawdown Global Máximo:** ${r['m_dd']:,.2f}")
+
+            with tabs[4]:
                 st.subheader("🤖 Consultoría Estratégica BIAL AI")
                 if st.button("Generar Informe Senior"):
                     with st.spinner("La IA está revisando los modelos disponibles y auditando tu cartera..."):
@@ -299,7 +376,7 @@ if check_password():
                                                   r['rango'])
                         st.info(analisis)
             
-            with tabs[4]:
+            with tabs[5]:
                 st.subheader("📂 Reportes de Auditoría Institucional")
                 detalles = []
                 for ea, w in r['weights'].items():
