@@ -155,12 +155,16 @@ if check_password():
     st.sidebar.markdown("---")
     auto_limpieza = st.sidebar.checkbox("🧹 Activar Auto-Limpieza BIAL", value=True, help="Elimina automáticamente estrategias con alta correlación (>0.75) y bajo Sharpe.")
     
-    # --- NUEVOS INPUTS: SIMULADOR DE FONDEO ---
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 🎯 Reglas de Prop Firm")
     target_pct = st.sidebar.number_input("Target Requerido (%)", value=8.0, step=1.0)
     max_dd_pct = st.sidebar.number_input("Max Drawdown Global (%)", value=10.0, step=1.0)
     daily_dd_pct = st.sidebar.number_input("Max Daily DD (%)", value=5.0, step=1.0)
+    
+    # --- NUEVOS INPUTS: EJECUCIÓN MT5 ---
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### ⚙️ Ejecución MT5")
+    lotes_totales = st.sidebar.number_input("Lotes Totales a Distribuir", value=1.00, step=0.01, help="Cuántos lotes en total querés que sumen todas tus estrategias juntas.")
     st.sidebar.markdown("---")
 
     api_key_gemini = st.sidebar.text_input("🔑 Gemini API Key", type="password", help="Pega aquí tu llave de Google AI Studio")
@@ -237,7 +241,6 @@ if check_password():
             score_f, rango, icono, color, desc = obtener_rango_bial(portfolio_series, cap_inicial, matriz_correlacion)
             net_p, m_dd, m_ratio, sharpe_f = calcular_kpis(portfolio_series, cap_inicial)
 
-            # --- LÓGICA DE SIMULACIÓN DE FONDEO ---
             target_usd = cap_inicial * (target_pct / 100)
             max_dd_usd = cap_inicial * (max_dd_pct / 100)
             daily_dd_usd = cap_inicial * (daily_dd_pct / 100)
@@ -260,19 +263,16 @@ if check_password():
                     
                 current_dd = high_water_mark - current_equity
                 
-                # Check 1: Daily DD Violado
                 if daily_pnl < -daily_dd_usd:
                     failed_prop = True
                     fail_reason = f"Violación de Daily Drawdown (${abs(daily_pnl):,.2f}) el {date.strftime('%d/%m/%Y')}."
                     break
                     
-                # Check 2: Max DD Violado
                 if current_dd > max_dd_usd:
                     failed_prop = True
                     fail_reason = f"Violación de Max Drawdown (${current_dd:,.2f}) el {date.strftime('%d/%m/%Y')}."
                     break
                     
-                # Check 3: Target Alcanzado
                 if (current_equity - cap_inicial) >= target_usd:
                     passed_prop = True
                     break
@@ -282,7 +282,6 @@ if check_password():
                 'days': days_to_pass, 'target_usd': target_usd, 'max_dd_usd': max_dd_usd,
                 'daily_dd_usd': daily_dd_usd, 'worst_daily': worst_daily
             }
-            # ----------------------------------------
 
             st.session_state['calculado'] = True
             st.session_state['res'] = {
@@ -290,7 +289,7 @@ if check_password():
                 'p_series': portfolio_series, 'net_p': net_p, 'm_dd': m_dd, 'sharpe': sharpe_f,
                 'trades': df_trades, 'weights': cleaned_weights, 'returns': df_retornos,
                 'n_archivos': len(df_retornos.columns), 'corr_matrix': matriz_correlacion,
-                'eliminados': eliminados_log, 'eval_prop': eval_prop # Guardamos los resultados
+                'eliminados': eliminados_log, 'eval_prop': eval_prop
             }
 
         if st.session_state.get('calculado'):
@@ -308,8 +307,8 @@ if check_password():
                 </div>
             """, unsafe_allow_html=True)
 
-            # --- AGREGAMOS LA NUEVA PESTAÑA DE FONDEO ---
-            tabs = st.tabs(["📈 Análisis Visual", "🌍 Activos", "🔗 Correlación", "🎯 Prueba de Fondeo", "🤖 Consultoría IA", "📥 Auditoría"])
+            # --- NUEVA PESTAÑA: EJECUCIÓN MT5 AGREGADA AL MENÚ ---
+            tabs = st.tabs(["📈 Análisis Visual", "🌍 Activos", "🔗 Correlación", "🎯 Prueba de Fondeo", "⚙️ Ejecución MT5", "🤖 Consultoría IA", "📥 Auditoría"])
             
             with tabs[0]:
                 equity_curve = cap_inicial + r['p_series'].cumsum()
@@ -341,7 +340,6 @@ if check_password():
                                      color_continuous_scale="RdBu_r", title="Correlación Diaria entre Estrategias")
                 st.plotly_chart(fig_corr, use_container_width=True)
 
-            # --- RENDERIZAMOS LA PESTAÑA DE FONDEO ---
             with tabs[3]:
                 e = r['eval_prop']
                 st.subheader("🎯 Simulador de Challenge (Prop Firms)")
@@ -356,7 +354,7 @@ if check_password():
                 
                 if e['passed']:
                     st.success(f"✅ **¡PRUEBA SUPERADA!** El portafolio alcanzó el target en **{e['days']} días** de operativa sin violar ninguna regla de riesgo. Apto para FTMO / FundedNext.")
-                    st.snow() # Lluvia de nieve para festejar el pase!
+                    st.snow()
                 elif e['failed']:
                     st.error(f"❌ **PRUEBA REPROBADA:** {e['reason']} Días operados hasta la eliminación: {e['days']}.")
                 else:
@@ -367,7 +365,43 @@ if check_password():
                 st.write(f"- **Peor Pérdida en un solo día (Worst Daily):** ${abs(e['worst_daily']):,.2f}")
                 st.write(f"- **Drawdown Global Máximo:** ${r['m_dd']:,.2f}")
 
+            # --- RENDERIZAMOS LA NUEVA PESTAÑA DE MT5 ---
             with tabs[4]:
+                st.subheader("⚙️ Traducir a MetaTrader 5")
+                st.markdown(f"Basado en un riesgo total distribuido de **{lotes_totales} lotes**, así debés configurar el parámetro `FixedLots` (o equivalente) en cada EA de tu MetaTrader 5.")
+                
+                lotes_data = []
+                alertas_microlotes = False
+                
+                for ea, w in r['weights'].items():
+                    if w > 0:
+                        lotes_asignados = round(w * lotes_totales, 2)
+                        estado = "✅ Listo para Operar"
+                        if lotes_asignados < 0.01:
+                            estado = "⚠️ Muy bajo (Redondear a 0.01 o descartar)"
+                            alertas_microlotes = True
+                            
+                        lotes_data.append({
+                            "Estrategia (EA)": ea, 
+                            "Peso Markowitz": f"{w*100:.2f}%", 
+                            "Lotes MT5 (FixedLots)": lotes_asignados,
+                            "Estado": estado
+                        })
+                
+                df_lotes = pd.DataFrame(lotes_data)
+                
+                # Le damos un formato visual de tabla profesional
+                st.dataframe(
+                    df_lotes.style.format({"Lotes MT5 (FixedLots)": "{:.2f}"})
+                                  .applymap(lambda x: 'background-color: #ef4444' if '⚠️' in str(x) else '', subset=['Estado']),
+                    use_container_width=True
+                )
+                
+                st.info("💡 **Tip BIAL TRADING:** Entrá a tu VPS, abrí las propiedades del Asesor Experto (F7) y pegá exactamente el número de la columna 'Lotes MT5' en la configuración de riesgo manual.")
+                if alertas_microlotes:
+                    st.warning("⚠️ OJO: Tenés estrategias a las que les toca menos de 0.01 lotes. MetaTrader 5 no soporta nano-lotes. Te sugiero aumentar los 'Lotes Totales' en la barra lateral o eliminar manualmente esa estrategia.")
+
+            with tabs[5]:
                 st.subheader("🤖 Consultoría Estratégica BIAL AI")
                 if st.button("Generar Informe Senior"):
                     with st.spinner("La IA está revisando los modelos disponibles y auditando tu cartera..."):
@@ -376,7 +410,7 @@ if check_password():
                                                   r['rango'])
                         st.info(analisis)
             
-            with tabs[5]:
+            with tabs[6]:
                 st.subheader("📂 Reportes de Auditoría Institucional")
                 detalles = []
                 for ea, w in r['weights'].items():
