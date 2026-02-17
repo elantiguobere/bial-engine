@@ -183,10 +183,7 @@ if check_password():
             mu = df_pct.mean() * 252            
             S = df_pct.cov() * 252              
             
-            # --- PARCHE PARA VERSIÓN NUEVA EN LA NUBE ---
-            # Ahora le pasamos el peso máximo (peso_max_ea) directo en la creación
             ef = EfficientFrontier(mu, S, weight_bounds=(0.0, peso_max_ea))
-            # --------------------------------------------
             
             try:
                 if "Sharpe" in objetivo_opt: weights = ef.max_sharpe()
@@ -200,7 +197,10 @@ if check_password():
             portfolio_series = pd.Series(0.0, index=df_retornos.index)
             for ea, w in cleaned_weights.items(): portfolio_series += df_retornos[ea] * w
                 
-            score_f, rango, icono, color, desc = obtener_rango_bial(portfolio_series, cap_inicial, df_retornos.corr())
+            # Calculamos la matriz de correlación completa para graficarla
+            matriz_correlacion = df_retornos.corr()
+                
+            score_f, rango, icono, color, desc = obtener_rango_bial(portfolio_series, cap_inicial, matriz_correlacion)
             net_p, m_dd, m_ratio, sharpe_f = calcular_kpis(portfolio_series, cap_inicial)
 
             st.session_state['calculado'] = True
@@ -208,7 +208,8 @@ if check_password():
                 'score': score_f, 'rango': rango, 'icono': icono, 'color': color, 'desc': desc,
                 'p_series': portfolio_series, 'net_p': net_p, 'm_dd': m_dd, 'sharpe': sharpe_f,
                 'trades': df_trades, 'weights': cleaned_weights, 'returns': df_retornos,
-                'n_archivos': len(archivos)
+                'n_archivos': len(archivos),
+                'corr_matrix': matriz_correlacion # Guardamos la matriz en la memoria
             }
 
         if st.session_state.get('calculado'):
@@ -223,7 +224,8 @@ if check_password():
                 </div>
             """, unsafe_allow_html=True)
 
-            tabs = st.tabs(["📈 Análisis Visual", "🌍 Activos", "🤖 Consultoría IA", "📥 Auditoría"])
+            # --- AGREGAMOS LA NUEVA PESTAÑA DE CORRELACIÓN ---
+            tabs = st.tabs(["📈 Análisis Visual", "🌍 Activos", "🔗 Correlación", "🤖 Consultoría IA", "📥 Auditoría"])
             
             with tabs[0]:
                 fig_eq = px.area(cap_inicial + r['p_series'].cumsum(), title="Crecimiento Consolidado BIAL")
@@ -236,7 +238,20 @@ if check_password():
                                     color_continuous_scale='RdYlGn', title="Beneficio Neto por Instrumento")
                 st.plotly_chart(fig_assets, use_container_width=True)
 
+            # --- DIBUJAMOS EL MAPA DE CALOR ACÁ ---
             with tabs[2]:
+                st.subheader("🔗 Mapa de Calor de Descorrelación")
+                st.markdown("Valores cercanos a **0** o **negativos (azul/verde)** indican excelente diversificación. Valores cercanos a **1 (rojo)** indican que los sistemas operan igual.")
+                
+                # Creamos el gráfico interactivo
+                fig_corr = px.imshow(r['corr_matrix'], 
+                                     text_auto=".2f", 
+                                     aspect="auto",
+                                     color_continuous_scale="RdBu_r", 
+                                     title="Correlación Diaria entre Estrategias")
+                st.plotly_chart(fig_corr, use_container_width=True)
+
+            with tabs[3]:
                 st.subheader("🤖 Consultoría Estratégica BIAL AI")
                 if st.button("Generar Informe Senior"):
                     with st.spinner("La IA está revisando los modelos disponibles y auditando tu cartera..."):
@@ -245,7 +260,7 @@ if check_password():
                                                   r['rango'])
                         st.info(analisis)
             
-            with tabs[3]:
+            with tabs[4]:
                 st.subheader("📂 Reportes de Auditoría Institucional")
                 detalles = []
                 for ea, w in r['weights'].items():
