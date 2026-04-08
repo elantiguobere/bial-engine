@@ -222,16 +222,27 @@ if check_password():
             mu = df_pct.mean() * 252            
             S = df_pct.cov() * 252              
             
-            ef = EfficientFrontier(mu, S, weight_bounds=(0.0, peso_max_ea))
-            
+            # --- PARCHE DE ESTABILIDAD: RE-INSTANCIACIÓN DE MOTORES Y FALLBACK ---
             try:
+                # Plan A: Intentar con el objetivo primario
+                ef = EfficientFrontier(mu, S, weight_bounds=(0.0, peso_max_ea))
                 if "Sharpe" in objetivo_opt: weights = ef.max_sharpe()
                 elif "Volatilidad" in objetivo_opt: weights = ef.min_volatility()
                 else: weights = ef.max_sharpe()
+                cleaned_weights = ef.clean_weights()
             except:
-                weights = ef.min_volatility()
-                
-            cleaned_weights = ef.clean_weights()
+                try:
+                    # Plan B: Si falló, instanciamos un motor NUEVO y vamos a Min Volatilidad
+                    ef = EfficientFrontier(mu, S, weight_bounds=(0.0, peso_max_ea))
+                    weights = ef.min_volatility()
+                    cleaned_weights = ef.clean_weights()
+                except:
+                    # Plan C (Ingeniero): Si la matemática choca (ej. muy pocos EAs y límites muy bajos)
+                    # Asignamos pesos equitativos manuales para que la app no colapse nunca.
+                    n_estrategias = len(df_retornos.columns)
+                    peso_fijo = 1.0 / n_estrategias
+                    cleaned_weights = {ea: peso_fijo for ea in df_retornos.columns}
+            # ---------------------------------------------------------------------
 
             portfolio_series = pd.Series(0.0, index=df_retornos.index)
             for ea, w in cleaned_weights.items(): portfolio_series += df_retornos[ea] * w
@@ -240,7 +251,6 @@ if check_password():
             score_f, rango, icono, color, desc = obtener_rango_bial(portfolio_series, cap_inicial, matriz_correlacion)
             net_p, m_dd, m_ratio, sharpe_f = calcular_kpis(portfolio_series, cap_inicial)
 
-            # --- SIMULACIÓN DE FONDEO ---
             target_usd = cap_inicial * (target_pct / 100)
             max_dd_usd = cap_inicial * (max_dd_pct / 100)
             daily_dd_usd = cap_inicial * (daily_dd_pct / 100)
@@ -272,7 +282,6 @@ if check_password():
                 'daily_dd_usd': daily_dd_usd, 'worst_daily': worst_daily
             }
 
-            # --- NUEVA LÓGICA: PREPARACIÓN DE HEATMAP MENSUAL ---
             temp_df = pd.DataFrame({'Retorno_USD': portfolio_series})
             temp_df['Year'] = temp_df.index.year
             temp_df['Month'] = temp_df.index.month
@@ -284,8 +293,7 @@ if check_password():
             heatmap_data.rename(columns={1:'Ene', 2:'Feb', 3:'Mar', 4:'Abr', 5:'May', 6:'Jun', 
                                          7:'Jul', 8:'Ago', 9:'Sep', 10:'Oct', 11:'Nov', 12:'Dic'}, inplace=True)
             heatmap_data['YTD'] = heatmap_data.sum(axis=1)
-            heatmap_data.index = heatmap_data.index.astype(str) # Convierte el Año en texto para gráficos perfectos
-            # ----------------------------------------------------
+            heatmap_data.index = heatmap_data.index.astype(str)
 
             st.session_state['calculado'] = True
             st.session_state['res'] = {
@@ -330,19 +338,17 @@ if check_password():
                 )
                 st.plotly_chart(fig_eq, use_container_width=True)
                 
-                # --- NUEVO GRÁFICO: HEATMAP MENSUAL ---
                 st.markdown("---")
                 st.subheader("📊 Rentabilidad Mensual Histórica (%)")
                 fig_hm = px.imshow(r['heatmap_data'], 
                                    text_auto=".2f", 
                                    aspect="auto",
                                    color_continuous_scale="RdYlGn", 
-                                   color_continuous_midpoint=0, # Centramos en 0 (Rojo negativo, Verde positivo)
+                                   color_continuous_midpoint=0, 
                                    labels=dict(x="Mes", y="Año", color="Retorno %"))
                 fig_hm.update_layout(xaxis_title="", yaxis_title="Año", coloraxis_showscale=False)
-                fig_hm.update_xaxes(side="top") # Ponemos los meses arriba
+                fig_hm.update_xaxes(side="top") 
                 st.plotly_chart(fig_hm, use_container_width=True)
-                # ----------------------------------------
 
             with tabs[1]:
                 asset_perf = r['trades'].groupby('Asset')['Profit/Loss'].sum().sort_values()
