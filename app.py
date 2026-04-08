@@ -222,9 +222,7 @@ if check_password():
             mu = df_pct.mean() * 252            
             S = df_pct.cov() * 252              
             
-            # --- PARCHE DE ESTABILIDAD: RE-INSTANCIACIÓN DE MOTORES Y FALLBACK ---
             try:
-                # Plan A: Intentar con el objetivo primario
                 ef = EfficientFrontier(mu, S, weight_bounds=(0.0, peso_max_ea))
                 if "Sharpe" in objetivo_opt: weights = ef.max_sharpe()
                 elif "Volatilidad" in objetivo_opt: weights = ef.min_volatility()
@@ -232,17 +230,13 @@ if check_password():
                 cleaned_weights = ef.clean_weights()
             except:
                 try:
-                    # Plan B: Si falló, instanciamos un motor NUEVO y vamos a Min Volatilidad
                     ef = EfficientFrontier(mu, S, weight_bounds=(0.0, peso_max_ea))
                     weights = ef.min_volatility()
                     cleaned_weights = ef.clean_weights()
                 except:
-                    # Plan C (Ingeniero): Si la matemática choca (ej. muy pocos EAs y límites muy bajos)
-                    # Asignamos pesos equitativos manuales para que la app no colapse nunca.
                     n_estrategias = len(df_retornos.columns)
                     peso_fijo = 1.0 / n_estrategias
                     cleaned_weights = {ea: peso_fijo for ea in df_retornos.columns}
-            # ---------------------------------------------------------------------
 
             portfolio_series = pd.Series(0.0, index=df_retornos.index)
             for ea, w in cleaned_weights.items(): portfolio_series += df_retornos[ea] * w
@@ -412,12 +406,14 @@ if check_password():
                 
                 df_lotes = pd.DataFrame(lotes_data)
                 
+                # --- PARCHE DE COMPATIBILIDAD CON PANDAS 2.1+ ---
                 st.dataframe(
                     df_lotes.style.format({"Lotes MT5 (FixedLots)": "{:.2f}"})
-                                  .applymap(lambda x: 'background-color: #ef4444' if '⚠️' in str(x) else '', subset=['Estado']),
+                                  .map(lambda x: 'background-color: #ef4444' if '⚠️' in str(x) else '', subset=['Estado']),
                     use_container_width=True
                 )
-                
+                # ------------------------------------------------
+
                 st.info("💡 **Tip BIAL TRADING:** Entrá a tu VPS, abrí las propiedades del Asesor Experto (F7) y pegá exactamente el número de la columna 'Lotes MT5' en la configuración de riesgo manual.")
                 if alertas_microlotes:
                     st.warning("⚠️ OJO: Tenés estrategias a las que les toca menos de 0.01 lotes. MetaTrader 5 no soporta nano-lotes. Te sugiero aumentar los 'Lotes Totales' en la barra lateral o eliminar manualmente esa estrategia.")
