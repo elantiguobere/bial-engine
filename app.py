@@ -5,6 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import io
 import requests
+import yfinance as yf
 from fpdf import FPDF
 from pypfopt.efficient_frontier import EfficientFrontier
 
@@ -318,17 +319,43 @@ if check_password():
             with tabs[0]:
                 equity_curve = cap_inicial + r['p_series'].cumsum()
                 fig_eq = go.Figure()
+                
+                # --- LÍNEA DE LA CARTERA BIAL ---
                 fig_eq.add_trace(go.Scatter(
-                    x=equity_curve.index, y=equity_curve, mode='lines', name='Valor Cartera',
-                    line=dict(color='#f59e0b', width=2), fill='tozeroy', fillcolor='rgba(245, 158, 11, 0.2)',
-                    hovertemplate='Fecha: %{x|%Y-%m-%d}<br>Valor: $%{y:,.2f}<extra></extra>'
+                    x=equity_curve.index, y=equity_curve, mode='lines', name='Cartera BIAL',
+                    line=dict(color='#f59e0b', width=3), fill='tozeroy', fillcolor='rgba(245, 158, 11, 0.1)',
+                    hovertemplate='BIAL: $%{y:,.2f}<extra></extra>'
                 ))
+                
+                # --- NUEVA LÍNEA: BENCHMARK S&P 500 (SPY) ---
+                try:
+                    start_dt = equity_curve.index.min().strftime('%Y-%m-%d')
+                    end_dt = (equity_curve.index.max() + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+                    
+                    # Descargamos el SPY desde Yahoo Finance
+                    spy = yf.Ticker("SPY").history(start=start_dt, end=end_dt)['Close']
+                    spy = spy.tz_localize(None) 
+                    
+                    # Sincronizamos las fechas del mercado con las de tu backtest
+                    spy = spy.reindex(equity_curve.index).ffill().bfill() 
+                    spy_pct = spy.pct_change().fillna(0)
+                    spy_equity = cap_inicial * (1 + spy_pct).cumprod()
+                    
+                    fig_eq.add_trace(go.Scatter(
+                        x=spy_equity.index, y=spy_equity, mode='lines', name='S&P 500',
+                        line=dict(color='#9ca3af', width=2, dash='dash'),
+                        hovertemplate='S&P 500: $%{y:,.2f}<extra></extra>'
+                    ))
+                except Exception as e:
+                    pass # Si no hay internet o falla Yahoo Finance, simplemente no dibuja la línea gris
+                # ---------------------------------------------
+
                 fig_eq.update_layout(
-                    title={'text': "<b>Crecimiento Patrimonial Consolidado BIAL</b>", 'y':0.9, 'x':0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': dict(size=20, color='#f59e0b')},
+                    title={'text': "<b>Crecimiento Patrimonial vs S&P 500</b>", 'y':0.9, 'x':0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': dict(size=20, color='#f59e0b')},
                     paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
                     xaxis=dict(title='Fecha', showgrid=False, color='#9ca3af'),
-                    yaxis=dict(title='Valor de la Cartera ($)', showgrid=True, gridcolor='rgba(128, 128, 128, 0.2)', tickprefix="$", color='#9ca3af'),
-                    showlegend=False, hovermode="x unified"
+                    yaxis=dict(title='Valor ($)', showgrid=True, gridcolor='rgba(128, 128, 128, 0.2)', tickprefix="$", color='#9ca3af'),
+                    showlegend=True, legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01), hovermode="x unified"
                 )
                 st.plotly_chart(fig_eq, use_container_width=True)
                 
@@ -406,14 +433,12 @@ if check_password():
                 
                 df_lotes = pd.DataFrame(lotes_data)
                 
-                # --- PARCHE DE COMPATIBILIDAD CON PANDAS 2.1+ ---
                 st.dataframe(
                     df_lotes.style.format({"Lotes MT5 (FixedLots)": "{:.2f}"})
                                   .map(lambda x: 'background-color: #ef4444' if '⚠️' in str(x) else '', subset=['Estado']),
                     use_container_width=True
                 )
-                # ------------------------------------------------
-
+                
                 st.info("💡 **Tip BIAL TRADING:** Entrá a tu VPS, abrí las propiedades del Asesor Experto (F7) y pegá exactamente el número de la columna 'Lotes MT5' en la configuración de riesgo manual.")
                 if alertas_microlotes:
                     st.warning("⚠️ OJO: Tenés estrategias a las que les toca menos de 0.01 lotes. MetaTrader 5 no soporta nano-lotes. Te sugiero aumentar los 'Lotes Totales' en la barra lateral o eliminar manualmente esa estrategia.")
