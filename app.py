@@ -149,7 +149,12 @@ class BIAL_Report(FPDF):
 # ==========================================
 if check_password():
     st.sidebar.markdown("<h1 style='text-align: center; color: #f59e0b;'>BIAL ENGINE</h1>", unsafe_allow_html=True)
-    cap_inicial = st.sidebar.number_input("Capital Inicial ($)", value=10000, step=1000)
+    
+    # --- NUEVOS INPUTS DE ESCALAMIENTO ---
+    cap_base_sqx = st.sidebar.number_input("Capital Base del Backtest SQX ($)", value=10000, step=1000, help="El capital exacto con el que generaste estos reportes CSV en StrategyQuant.")
+    cap_inicial = st.sidebar.number_input("Capital Inicial a Simular ($)", value=100000, step=5000, help="El capital que querés simular ahora (ej. Cuenta de Fondeo). BIAL ENGINE escalará los resultados automáticamente.")
+    # ---------------------------------------
+    
     objetivo_opt = st.sidebar.selectbox("Optimizar para", ["Max Sharpe", "Min Volatilidad", "Max Return"])
     peso_max_ea = st.sidebar.slider("Peso Máximo por EA", 0.1, 1.0, 0.5)
     
@@ -192,6 +197,14 @@ if check_password():
             df_retornos = df_retornos[df_retornos.index.notnull()]
             df_retornos = df_retornos.groupby(df_retornos.index).sum()
             df_retornos = df_retornos.astype(np.float64)
+            
+            # --- MOTOR DE AUTO-ESCALAMIENTO BIAL ---
+            factor_escala = cap_inicial / cap_base_sqx
+            df_retornos = df_retornos * factor_escala
+            
+            df_trades = pd.concat(all_trades)
+            df_trades['Profit/Loss'] = df_trades['Profit/Loss'] * factor_escala
+            # -----------------------------------------
 
             eliminados_log = []
             if auto_limpieza and len(df_retornos.columns) > 1:
@@ -216,7 +229,6 @@ if check_password():
                     df_retornos = df_retornos.drop(columns=list(to_drop))
                     eliminados_log = list(to_drop)
 
-            df_trades = pd.concat(all_trades)
             df_trades = df_trades[df_trades['EA'].isin(df_retornos.columns)]
 
             df_pct = df_retornos / cap_inicial
@@ -320,23 +332,19 @@ if check_password():
                 equity_curve = cap_inicial + r['p_series'].cumsum()
                 fig_eq = go.Figure()
                 
-                # --- LÍNEA DE LA CARTERA BIAL ---
                 fig_eq.add_trace(go.Scatter(
                     x=equity_curve.index, y=equity_curve, mode='lines', name='Cartera BIAL',
                     line=dict(color='#f59e0b', width=3), fill='tozeroy', fillcolor='rgba(245, 158, 11, 0.1)',
                     hovertemplate='BIAL: $%{y:,.2f}<extra></extra>'
                 ))
                 
-                # --- NUEVA LÍNEA: BENCHMARK S&P 500 (SPY) ---
                 try:
                     start_dt = equity_curve.index.min().strftime('%Y-%m-%d')
                     end_dt = (equity_curve.index.max() + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
                     
-                    # Descargamos el SPY desde Yahoo Finance
                     spy = yf.Ticker("SPY").history(start=start_dt, end=end_dt)['Close']
                     spy = spy.tz_localize(None) 
                     
-                    # Sincronizamos las fechas del mercado con las de tu backtest
                     spy = spy.reindex(equity_curve.index).ffill().bfill() 
                     spy_pct = spy.pct_change().fillna(0)
                     spy_equity = cap_inicial * (1 + spy_pct).cumprod()
@@ -347,8 +355,7 @@ if check_password():
                         hovertemplate='S&P 500: $%{y:,.2f}<extra></extra>'
                     ))
                 except Exception as e:
-                    pass # Si no hay internet o falla Yahoo Finance, simplemente no dibuja la línea gris
-                # ---------------------------------------------
+                    pass 
 
                 fig_eq.update_layout(
                     title={'text': "<b>Crecimiento Patrimonial vs S&P 500</b>", 'y':0.9, 'x':0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': dict(size=20, color='#f59e0b')},
