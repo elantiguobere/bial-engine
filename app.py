@@ -149,7 +149,10 @@ class BIAL_Report(FPDF):
 # ==========================================
 if check_password():
     st.sidebar.markdown("<h1 style='text-align: center; color: #f59e0b;'>BIAL ENGINE</h1>", unsafe_allow_html=True)
-    cap_inicial = st.sidebar.number_input("Capital Inicial ($)", value=10000, step=1000)
+    
+    cap_base_sqx = st.sidebar.number_input("Capital Base del Backtest SQX ($)", value=10000, step=1000, help="El capital exacto con el que generaste estos reportes CSV en StrategyQuant.")
+    cap_inicial = st.sidebar.number_input("Capital Inicial a Simular ($)", value=10000, step=1000, help="El capital que querés simular ahora. BIAL ENGINE escalará los resultados automáticamente.")
+    
     objetivo_opt = st.sidebar.selectbox("Optimizar para", ["Max Sharpe", "Min Volatilidad", "Max Return"])
     peso_max_ea = st.sidebar.slider("Peso Máximo por EA", 0.1, 1.0, 0.5)
     
@@ -192,6 +195,12 @@ if check_password():
             df_retornos = df_retornos[df_retornos.index.notnull()]
             df_retornos = df_retornos.groupby(df_retornos.index).sum()
             df_retornos = df_retornos.astype(np.float64)
+            
+            factor_escala = cap_inicial / cap_base_sqx
+            df_retornos = df_retornos * factor_escala
+            
+            df_trades = pd.concat(all_trades)
+            df_trades['Profit/Loss'] = df_trades['Profit/Loss'] * factor_escala
 
             eliminados_log = []
             if auto_limpieza and len(df_retornos.columns) > 1:
@@ -216,7 +225,6 @@ if check_password():
                     df_retornos = df_retornos.drop(columns=list(to_drop))
                     eliminados_log = list(to_drop)
 
-            df_trades = pd.concat(all_trades)
             df_trades = df_trades[df_trades['EA'].isin(df_retornos.columns)]
 
             df_pct = df_retornos / cap_inicial
@@ -317,47 +325,46 @@ if check_password():
             tabs = st.tabs(["📈 Análisis Visual", "🌍 Activos", "🔗 Correlación", "🎯 Prueba de Fondeo", "⚙️ Ejecución MT5", "🤖 Consultoría IA", "📥 Auditoría"])
             
             with tabs[0]:
-                equity_curve = cap_inicial + r['p_series'].cumsum()
+                # --- NUEVA LÓGICA: GRÁFICO NORMALIZADO A PORCENTAJES (%) ---
+                equity_pct = (r['p_series'].cumsum() / cap_inicial) * 100
                 fig_eq = go.Figure()
                 
-                # --- LÍNEA DE LA CARTERA BIAL ---
                 fig_eq.add_trace(go.Scatter(
-                    x=equity_curve.index, y=equity_curve, mode='lines', name='Cartera BIAL',
+                    x=equity_pct.index, y=equity_pct, mode='lines', name='Cartera BIAL',
                     line=dict(color='#f59e0b', width=3), fill='tozeroy', fillcolor='rgba(245, 158, 11, 0.1)',
-                    hovertemplate='BIAL: $%{y:,.2f}<extra></extra>'
+                    hovertemplate='BIAL: +%{y:.2f}%<extra></extra>'
                 ))
                 
-                # --- NUEVA LÍNEA: BENCHMARK S&P 500 (SPY) ---
                 try:
-                    start_dt = equity_curve.index.min().strftime('%Y-%m-%d')
-                    end_dt = (equity_curve.index.max() + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+                    start_dt = equity_pct.index.min().strftime('%Y-%m-%d')
+                    end_dt = (equity_pct.index.max() + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
                     
-                    # Descargamos el SPY desde Yahoo Finance
                     spy = yf.Ticker("SPY").history(start=start_dt, end=end_dt)['Close']
                     spy = spy.tz_localize(None) 
                     
-                    # Sincronizamos las fechas del mercado con las de tu backtest
-                    spy = spy.reindex(equity_curve.index).ffill().bfill() 
+                    spy = spy.reindex(equity_pct.index).ffill().bfill() 
                     spy_pct = spy.pct_change().fillna(0)
-                    spy_equity = cap_inicial * (1 + spy_pct).cumprod()
+                    
+                    # Convertimos el SPY a porcentaje puro acumulado
+                    spy_cum_pct = ((1 + spy_pct).cumprod() - 1) * 100
                     
                     fig_eq.add_trace(go.Scatter(
-                        x=spy_equity.index, y=spy_equity, mode='lines', name='S&P 500',
+                        x=spy_cum_pct.index, y=spy_cum_pct, mode='lines', name='S&P 500',
                         line=dict(color='#9ca3af', width=2, dash='dash'),
-                        hovertemplate='S&P 500: $%{y:,.2f}<extra></extra>'
+                        hovertemplate='S&P 500: +%{y:.2f}%<extra></extra>'
                     ))
                 except Exception as e:
-                    pass # Si no hay internet o falla Yahoo Finance, simplemente no dibuja la línea gris
-                # ---------------------------------------------
+                    pass 
 
                 fig_eq.update_layout(
-                    title={'text': "<b>Crecimiento Patrimonial vs S&P 500</b>", 'y':0.9, 'x':0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': dict(size=20, color='#f59e0b')},
+                    title={'text': "<b>Rendimiento Acumulado vs S&P 500 (%)</b>", 'y':0.9, 'x':0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': dict(size=20, color='#f59e0b')},
                     paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
                     xaxis=dict(title='Fecha', showgrid=False, color='#9ca3af'),
-                    yaxis=dict(title='Valor ($)', showgrid=True, gridcolor='rgba(128, 128, 128, 0.2)', tickprefix="$", color='#9ca3af'),
+                    yaxis=dict(title='Crecimiento (%)', showgrid=True, gridcolor='rgba(128, 128, 128, 0.2)', ticksuffix="%", color='#9ca3af'),
                     showlegend=True, legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01), hovermode="x unified"
                 )
                 st.plotly_chart(fig_eq, use_container_width=True)
+                # -------------------------------------------------------------
                 
                 st.markdown("---")
                 st.subheader("📊 Rentabilidad Mensual Histórica (%)")
