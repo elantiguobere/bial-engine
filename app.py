@@ -298,17 +298,24 @@ if check_password():
             heatmap_data['YTD'] = heatmap_data.sum(axis=1)
             heatmap_data.index = heatmap_data.index.astype(str)
 
+            # --- PARCHE DE MEMORIA APLICADO AQUÍ ---
             st.session_state['calculado'] = True
             st.session_state['res'] = {
                 'score': score_f, 'rango': rango, 'icono': icono, 'color': color, 'desc': desc,
                 'p_series': portfolio_series, 'net_p': net_p, 'm_dd': m_dd, 'sharpe': sharpe_f,
                 'trades': df_trades, 'weights': cleaned_weights, 'returns': df_retornos,
                 'n_archivos': len(df_retornos.columns), 'corr_matrix': matriz_correlacion,
-                'eliminados': eliminados_log, 'eval_prop': eval_prop, 'heatmap_data': heatmap_data
+                'eliminados': eliminados_log, 'eval_prop': eval_prop, 'heatmap_data': heatmap_data,
+                'cap_inicial_fijo': cap_inicial # CONGELAMOS EL CAPITAL DE ESTE CÁLCULO
             }
 
         if st.session_state.get('calculado'):
             r = st.session_state['res']
+            c_inicial = r['cap_inicial_fijo'] # USAMOS EL CAPITAL CONGELADO PARA DIBUJAR
+            
+            # --- ALERTA DE UX SI EL USUARIO CAMBIA EL PARÁMETRO SIN CALCULAR ---
+            if cap_inicial != c_inicial:
+                st.warning("⚠️ **Cambiaste el Capital Inicial a Simular.** Hacé clic en el botón naranja '🚀 CALCULAR ESTRATEGIA BIAL' para regenerar la matemática de la cartera.")
             
             if r['eliminados']:
                 st.warning(f"🧹 **Filtro BIAL Activado:** Se descartaron {len(r['eliminados'])} estrategias redundantes o con mal ratio riesgo/beneficio: {', '.join(r['eliminados'])}")
@@ -325,8 +332,7 @@ if check_password():
             tabs = st.tabs(["📈 Análisis Visual", "🌍 Activos", "🔗 Correlación", "🎯 Prueba de Fondeo", "⚙️ Ejecución MT5", "🤖 Consultoría IA", "📥 Auditoría"])
             
             with tabs[0]:
-                # --- NUEVA LÓGICA: GRÁFICO NORMALIZADO A PORCENTAJES (%) ---
-                equity_pct = (r['p_series'].cumsum() / cap_inicial) * 100
+                equity_pct = (r['p_series'].cumsum() / c_inicial) * 100
                 fig_eq = go.Figure()
                 
                 fig_eq.add_trace(go.Scatter(
@@ -345,7 +351,6 @@ if check_password():
                     spy = spy.reindex(equity_pct.index).ffill().bfill() 
                     spy_pct = spy.pct_change().fillna(0)
                     
-                    # Convertimos el SPY a porcentaje puro acumulado
                     spy_cum_pct = ((1 + spy_pct).cumprod() - 1) * 100
                     
                     fig_eq.add_trace(go.Scatter(
@@ -364,7 +369,6 @@ if check_password():
                     showlegend=True, legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01), hovermode="x unified"
                 )
                 st.plotly_chart(fig_eq, use_container_width=True)
-                # -------------------------------------------------------------
                 
                 st.markdown("---")
                 st.subheader("📊 Rentabilidad Mensual Histórica (%)")
@@ -464,7 +468,7 @@ if check_password():
                 detalles = []
                 for ea, w in r['weights'].items():
                     if w > 0:
-                        p_i, dd_i, r_i, sh_i = calcular_kpis(r['returns'][ea], cap_inicial)
+                        p_i, dd_i, r_i, sh_i = calcular_kpis(r['returns'][ea], c_inicial)
                         detalles.append({"Estrategia": ea, "Asignación": f"{w*100:.2f}%", "Profit": round(p_i, 2), "MaxDD": round(dd_i, 2)})
                 
                 df_det = pd.DataFrame(detalles)
